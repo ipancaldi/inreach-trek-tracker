@@ -35,6 +35,37 @@ export function extractJsonValue(text: string, start: number): any {
   throw new Error("Unbalanced JSON");
 }
 
+/** Sessions via Garmin's REST API. The profile page only embeds session
+ *  lists sometimes (never while a walk is live) — the reliable source is
+ *  /api/user/{guid}/profile-sessions, authenticated with the CSRF token
+ *  and cookies handed out by the profile page itself. */
+export async function livetrackSessionsViaApi(name: string): Promise<any | null> {
+  const r = await fetch("https://live.garmin.com/" + encodeURIComponent(name), {
+    headers: { "User-Agent": UA },
+  });
+  if (!r.ok) return null;
+  const html = await r.text();
+  const tok = html.match(/name="csrf-token" content="([^"]+)"/)?.[1];
+  const guid = html.match(/garminGuid\\?":\\?"([0-9a-f-]{36})/)?.[1];
+  if (!tok || !guid) return null;
+  const cookies = (r.headers.getSetCookie?.() ?? [])
+    .map((c: string) => c.split(";")[0])
+    .join("; ");
+  const r2 = await fetch(
+    `https://live.garmin.com/api/user/${guid}/profile-sessions?limit=20`,
+    {
+      headers: {
+        "User-Agent": UA,
+        "Livetrack-Csrf-Token": tok,
+        Accept: "application/json",
+        ...(cookies ? { Cookie: cookies } : {}),
+      },
+    },
+  );
+  if (!r2.ok) return null;
+  return await r2.json();
+}
+
 /** JSON response with CORS open — the GitHub Pages copy of the app calls
  *  these functions cross-origin. The data is Garmin's public share feed. */
 export function corsJson(obj: unknown, status = 200): Response {

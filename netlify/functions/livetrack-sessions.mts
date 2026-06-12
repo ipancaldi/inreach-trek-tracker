@@ -1,8 +1,17 @@
-import { extractJsonValue, fetchRsc, corsJson } from "../lib/garmin.mts";
+import { extractJsonValue, fetchRsc, corsJson, livetrackSessionsViaApi } from "../lib/garmin.mts";
 
 export default async (req: Request) => {
   const name = new URL(req.url).searchParams.get("name")?.trim();
   if (!name) return corsJson({ error: "Missing profile name" }, 400);
+
+  // Primary: Garmin's REST API (the only source that always lists an
+  // in-progress walk). Fallback: session lists embedded in the page payload.
+  try {
+    const api = await livetrackSessionsViaApi(name);
+    if (api && ("activeSessions" in api || "completedSessions" in api)) return corsJson(api);
+  } catch {
+    /* fall through to the RSC scrape */
+  }
 
   let body: string;
   try {

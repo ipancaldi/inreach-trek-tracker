@@ -382,7 +382,7 @@ function renderTrack(points, { fit = true } = {}) {
     zIndexOffset: 1000
   }).bindPopup(pointPopup(last, points.length - 1, true)).addTo(map);
 
-  if (fit) map.fitBounds(trackLine.getBounds(), { padding: [50, 50] });
+  if (fit) map.fitBounds(trackLine.getBounds(), { padding: [50, 50], maxZoom: 16 });
   updateStats();
   showLastFix(last);
 }

@@ -191,8 +191,41 @@ def extract_json_value(text, start):
     raise ValueError("Unbalanced JSON")
 
 
+def livetrack_sessions_api(name):
+    """Sessions via Garmin's REST API — the only source that always lists an
+    in-progress walk. Auth: CSRF token + cookies from the profile page."""
+    import http.cookiejar
+    import re
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    ua = "Mozilla/5.0 (Macintosh) inReach-Trek-Tracker/1.0"
+    req = urllib.request.Request(
+        LIVETRACK_PROFILE + urllib.parse.quote(name), headers={"User-Agent": ua})
+    with opener.open(req, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+    m_tok = re.search(r'name="csrf-token" content="([^"]+)"', html)
+    m_guid = re.search(r'garminGuid\\?":\\?"([0-9a-f-]{36})', html)
+    if not (m_tok and m_guid):
+        return None
+    req2 = urllib.request.Request(
+        f"https://live.garmin.com/api/user/{m_guid.group(1)}/profile-sessions?limit=20",
+        headers={
+            "User-Agent": ua,
+            "Livetrack-Csrf-Token": m_tok.group(1),
+            "Accept": "application/json",
+        })
+    with opener.open(req2, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
 def livetrack_sessions(name):
     """Active + completed LiveTrack sessions for a live.garmin.com profile."""
+    try:
+        api = livetrack_sessions_api(name)
+        if api and ("activeSessions" in api or "completedSessions" in api):
+            return api
+    except Exception:
+        pass  # fall through to the page-payload scrape
     body = fetch_rsc(LIVETRACK_PROFILE + urllib.parse.quote(name))
     # several "garminGuid" objects exist (UI component props); we want the
     # data object — the one that carries the session lists
