@@ -325,9 +325,13 @@ function setStatus(text, cls) {
   $("statusText").textContent = text;
   $("statusPill").className = cls || "";
 }
-// On static hosting (GitHub Pages) the /api/* companion server isn't there
-const isStatic = /github\.io$/.test(location.hostname);
-const NEEDS_SERVER = "Needs the local server — run python3 server.py (see README)";
+// Garmin API: same-origin on the local server and on Netlify (serverless
+// functions); the GitHub Pages copy calls the Netlify functions cross-origin.
+const onPages = /github\.io$/.test(location.hostname);
+const API = onPages ? "https://inreach-trek-tracker.netlify.app" : "";
+// USB device bridge only exists when running the local Python server
+const hasLocalServer = !onPages && !/netlify\.app$/.test(location.hostname);
+const NEEDS_SERVER = "USB needs the local app — run python3 server.py (see README)";
 function haversine(a, b) {
   const R = 6371000, rad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
@@ -449,10 +453,9 @@ async function fetchLive(auto) {
   localStorage.setItem("msName", name);
   if (!auto) setStatus("Fetching from Garmin…");
 
-  if (isStatic) { setStatus(NEEDS_SERVER, "error"); stopLive(); return; }
   let data;
   try {
-    const r = await fetch("/api/livetrack/sessions?name=" + encodeURIComponent(name));
+    const r = await fetch(API + "/api/livetrack/sessions?name=" + encodeURIComponent(name));
     if (r.status === 404 && (r.headers.get("content-type") || "").includes("json")) {
       return fetchMapShare(auto); // profile not found — try older MapShare-only accounts
     }
@@ -506,7 +509,7 @@ function renderSessionList(active, completed) {
 
 async function loadLiveSession(s, auto, isLive) {
   try {
-    const r = await fetch(`/api/livetrack/track?id=${encodeURIComponent(s.sessionId)}&token=${encodeURIComponent(s.sessionToken)}`);
+    const r = await fetch(`${API}/api/livetrack/track?id=${encodeURIComponent(s.sessionId)}&token=${encodeURIComponent(s.sessionToken)}`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
     const { points } = await r.json();
     if (!points.length) { setStatus("Session has no track points yet", isLive ? "live" : ""); return; }
@@ -542,7 +545,7 @@ async function fetchMapShare(auto) {
   const qs = new URLSearchParams({ name, password: $("msPass").value, d1 });
 
   try {
-    const r = await fetch("/api/mapshare?" + qs);
+    const r = await fetch(API + "/api/mapshare?" + qs);
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       throw new Error(err.error || "HTTP " + r.status);
@@ -595,7 +598,7 @@ let devWasConnected = false;
 
 async function connectDevice(silent) {
   const btn = $("btnConnect");
-  if (isStatic) { if (!silent) setStatus(NEEDS_SERVER, "error"); return; }
+  if (!hasLocalServer) { if (!silent) setStatus(NEEDS_SERVER, "error"); return; }
   if (!silent) {
     btn.disabled = true;
     btn.textContent = "Scanning…";
