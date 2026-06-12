@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>inReach Trek Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #101418;
+    --glass: rgba(16, 20, 25, .78);
+    --glass-border: rgba(255, 255, 255, .08);
+    --text: #eef2f6;
+    --muted: #93a0ad;
+    --accent: #34c98c;
+    --accent-2: #4aa8ff;
+    --pin: #ff8a4a;
+    --danger: #ff5d5d;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; margin: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  #map { position: fixed; inset: 0; z-index: 0; background: #0c0f13; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 12px; right: 12px; z-index: 1100;
+    display: flex; align-items: center; gap: 10px; pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .iconbtn {
+    width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--glass-border);
+    background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    color: var(--text); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,.35); transition: transform .15s, background .2s;
+    flex-shrink: 0;
+  }
+  .iconbtn:active { transform: scale(.92); }
+  .iconbtn svg { width: 21px; height: 21px; }
+
+  #statusPill {
+    margin-left: auto; display: flex; align-items: center; gap: 7px;
+    background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border); border-radius: 23px; padding: 9px 14px;
+    font-size: 12px; color: var(--muted); max-width: 60vw; box-shadow: 0 4px 18px rgba(0,0,0,.35);
+  }
+  #statusPill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  #statusPill.live .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  #statusPill.error .dot { background: var(--danger); }
+  #statusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- floating action buttons ---------- */
+  .fabs {
+    position: fixed; right: 14px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 1100;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .fab {
+    width: 58px; height: 58px; border-radius: 50%; border: 1px solid var(--glass-border);
+    background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45); transition: transform .15s, background .25s, color .25s;
+  }
+  .fab:active { transform: scale(.9); }
+  .fab svg { width: 26px; height: 26px; }
+  #fabLive.active { background: var(--accent); color: #06281a; border-color: transparent; }
+  #fabLive.active::after {
+    content: ""; position: absolute; inset: -6px; border-radius: 50%;
+    border: 2px solid var(--accent); animation: ring 1.6s ease-out infinite;
+  }
+  .fab { position: relative; }
+  @keyframes ring { 0% { transform: scale(.8); opacity: .9; } 100% { transform: scale(1.25); opacity: 0; } }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* ---------- stats strip ---------- */
+  #statsBar {
+    position: fixed; left: 12px; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 1100;
+    background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border); border-radius: var(--radius);
+    display: flex; box-shadow: 0 6px 24px rgba(0,0,0,.45); padding: 10px 4px;
+  }
+  #statsBar .stat { flex: 1; text-align: center; min-width: 0; }
+  #statsBar .v { font-size: 16px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
+  #statsBar .k { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .09em; margin-top: 2px; }
+  #statsBar .stat + .stat { border-left: 1px solid var(--glass-border); }
+
+  /* ---------- drawer ---------- */
+  #overlay {
+    position: fixed; inset: 0; z-index: 1200; background: rgba(0,0,0,.45);
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  #overlay.open { opacity: 1; pointer-events: auto; }
+  #drawer {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 1300; width: min(86vw, 360px);
+    background: rgba(16, 20, 25, .92); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+    border-right: 1px solid var(--glass-border);
+    transform: translateX(-105%); transition: transform .28s cubic-bezier(.32,.72,.34,1);
+    overflow-y: auto; padding: calc(14px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  #drawer.open { transform: translateX(0); }
+  .drawer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .drawer-head h1 { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .drawer-head .sub { font-size: 11px; color: var(--muted); }
+  .drawer-head .close { margin-left: auto; }
+
+  section {
+    background: rgba(255,255,255,.04); border: 1px solid var(--glass-border);
+    border-radius: var(--radius); padding: 14px; margin-bottom: 12px;
+  }
+  section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 10px; }
+
+  label { display: block; font-size: 11px; color: var(--muted); margin: 9px 0 4px; }
+  input[type="text"], input[type="password"], select {
+    width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--glass-border);
+    background: rgba(0,0,0,.35); color: var(--text); font-size: 14px; outline: none; appearance: none;
+  }
+  input:focus, select:focus { border-color: var(--accent-2); }
+
+  button { font-family: inherit; cursor: pointer; border: none; border-radius: 12px; padding: 11px 12px; font-size: 13px; font-weight: 550; color: var(--text); background: rgba(255,255,255,.07); border: 1px solid var(--glass-border); }
+  button:active { filter: brightness(1.3); }
+  button.primary { background: var(--accent); border-color: transparent; color: #06281a; }
+  button.blue { background: var(--accent-2); border-color: transparent; color: #06203a; }
+  button.warn { background: var(--danger); border-color: transparent; color: #fff; }
+  button.toggled { background: var(--pin); border-color: transparent; color: #3a1c08; }
+  button:disabled { opacity: .4; cursor: default; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row button { flex: 1; }
+
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 11px; font-size: 13px; color: var(--muted); }
+  .check input { accent-color: var(--accent); width: 17px; height: 17px; }
+  .check label { margin: 0; font-size: 13px; }
+
+  .hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 9px; }
+
+  ul.filelist { list-style: none; margin-top: 8px; max-height: 170px; overflow-y: auto; font-size: 13px; }
+  ul.filelist li { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid var(--glass-border); }
+  ul.filelist li:last-child { border-bottom: none; }
+  ul.filelist .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.filelist .fmeta { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  ul.filelist button { padding: 5px 12px; font-size: 12px; background: var(--accent-2); border: none; color: #06203a; flex-shrink: 0; border-radius: 9px; }
+  .livebadge { background: var(--danger); color: #fff; font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 8px; letter-spacing: .05em; animation: pulse 1.2s infinite; }
+
+  #pinList { list-style: none; margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 12px; }
+  #pinList li { display: flex; align-items: center; gap: 7px; padding: 5px 2px; border-bottom: 1px solid var(--glass-border); }
+  #pinList li:last-child { border-bottom: none; }
+  #pinList .n { width: 19px; height: 19px; border-radius: 50%; background: var(--pin); color: #3a1c08; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  #pinList .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pinList .d { color: var(--muted); font-size: 11px; }
+  #pinList button { padding: 1px 7px; font-size: 12px; background: transparent; border: none; color: var(--danger); }
+
+  .devbox { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 10px; }
+  .devbox b { color: var(--text); }
+  .devbox .ok { color: var(--accent); font-weight: 600; }
+  .devbox .no { color: var(--danger); font-weight: 600; }
+
+  #lastFix { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 10px; }
+  #lastFix b { color: var(--text); font-weight: 600; }
+
+  .map-hint {
+    position: fixed; top: calc(68px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 1100;
+    background: var(--pin); color: #3a1c08; padding: 7px 16px; border-radius: 20px;
+    font-size: 12px; font-weight: 650; box-shadow: 0 4px 14px rgba(0,0,0,.4); display: none; white-space: nowrap;
+  }
+  #dropZone.drag { outline: 2px dashed var(--accent-2); outline-offset: -2px; }
+
+  .pin-icon { background: var(--pin); color: #3a1c08; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .pin-icon span { transform: rotate(45deg); font-size: 11px; font-weight: 700; }
+  .me-icon { width: 18px; height: 18px; border-radius: 50%; background: var(--accent-2); border: 3px solid #fff; box-shadow: 0 0 10px var(--accent-2); }
+
+  .leaflet-control-zoom { display: none; }
+  .leaflet-control-attribution { font-size: 9px; background: rgba(16,20,25,.6) !important; color: var(--muted) !important; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .leaflet-control-scale-line { background: rgba(16,20,25,.6); color: var(--text); border-color: var(--glass-border); }
+
+  @media (min-width: 768px) {
+    .leaflet-control-zoom { display: block; }
+    #statsBar { left: 50%; right: auto; transform: translateX(-50%); width: 480px; }
+    .fabs { bottom: 110px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- top bar -->
+<div class="topbar">
+  <button class="iconbtn" id="btnMenu" aria-label="Menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div id="statusPill"><span class="dot"></span><span id="statusText">Ready</span></div>
+</div>
+
+<!-- floating action buttons -->
+<div class="fabs">
+  <button class="fab" id="fabLive" aria-label="Live tracking">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+      <path d="M7.7 16.3a6 6 0 0 1 0-8.6M16.3 7.7a6 6 0 0 1 0 8.6M4.9 19.1c-3.9-3.9-3.9-10.3 0-14.2M19.1 4.9c3.9 3.9 3.9 10.3 0 14.2"/>
+    </svg>
+  </button>
+  <button class="fab" id="fabLocate" aria-label="My position">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+    </svg>
+  </button>
+</div>
+
+<!-- stats strip -->
+<div id="statsBar">
+  <div class="stat"><div class="v" id="stDist">—</div><div class="k">Distance</div></div>
+  <div class="stat"><div class="v" id="stTime">—</div><div class="k">Duration</div></div>
+  <div class="stat"><div class="v" id="stSpeed">—</div><div class="k">Avg speed</div></div>
+  <div class="stat"><div class="v" id="stPoints">—</div><div class="k">Points</div></div>
+</div>
+
+<div class="map-hint" id="mapHint">Pin mode — tap the map to drop a pin</div>
+
+<!-- drawer -->
+<div id="overlay"></div>
+<nav id="drawer">
+  <div class="drawer-head">
+    <div>
+      <h1>🛰️ Trek Tracker</h1>
+      <div class="sub">Garmin inReach Mini 2 · Iridium</div>
+    </div>
+    <button class="iconbtn close" id="btnClose" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+
+  <section>
+    <h2>Live tracking</h2>
+    <label for="msName">Garmin Share name <span style="color:var(--muted)">(live.garmin.com/<b>name</b>)</span></label>
+    <input type="text" id="msName" placeholder="e.g. pancaldi" autocomplete="off">
+    <label for="msPass">MapShare password (if set)</label>
+    <input type="password" id="msPass" placeholder="leave empty if public">
+    <label for="msHours">KML fallback look-back</label>
+    <select id="msHours">
+      <option value="6">Last 6 hours</option>
+      <option value="12" selected>Last 12 hours</option>
+      <option value="24">Last 24 hours</option>
+      <option value="72">Last 3 days</option>
+      <option value="168">Last 7 days</option>
+    </select>
+    <div class="check">
+      <input type="checkbox" id="followLast" checked>
+      <label for="followLast">Follow latest position</label>
+    </div>
+    <div id="lastFix"></div>
+    <ul class="filelist" id="sessionList"></ul>
+    <div class="hint">Tap the <b>satellite button</b> on the map to start/stop live tracking. Past sessions appear here after the first fetch.</div>
+  </section>
+
+  <section>
+    <h2>Device (USB)</h2>
+    <div class="row" style="margin-top:0">
+      <button class="primary" id="btnConnect">Connect device</button>
+    </div>
+    <div id="devStatus" class="devbox"></div>
+    <ul class="filelist" id="devFiles"></ul>
+  </section>
+
+  <section>
+    <h2>Pins &amp; trek builder</h2>
+    <div class="row" style="margin-top:0">
+      <button id="btnPinMode">Drop pins: OFF</button>
+    </div>
+    <div class="row">
+      <button id="btnUndoPin">Undo</button>
+      <button class="warn" id="btnClearPins">Clear</button>
+    </div>
+    <ul id="pinList"></ul>
+    <div class="hint">Turn pin mode on, then tap the map to drop numbered pins — they connect into a trek line. Drag a pin to move it.</div>
+  </section>
+
+  <section id="dropZone">
+    <h2>Import / Export</h2>
+    <div class="row" style="margin-top:0">
+      <button class="blue" id="btnImport">Import GPX</button>
+      <button id="btnExport">Export GPX</button>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnSend" disabled title="Connect the device first">⬆ Send trek to device</button>
+    </div>
+    <input type="file" id="gpxFile" accept=".gpx,.xml" style="display:none">
+    <div class="hint">Import a GPX from Garmin Explore or any app. Send writes your pinned trek into the device's import folder.</div>
+  </section>
+
+  <section>
+    <h2>Map</h2>
+    <div class="row" style="margin-top:0">
+      <button id="btnLayer">Topo map: OFF</button>
+      <button id="btnFit">Fit track</button>
+    </div>
+  </section>
+</nav>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ---------- Map ---------- */
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+const topo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+  maxZoom: 17, attribution: '&copy; OpenStreetMap, SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
+});
+const map = L.map("map", { layers: [osm], zoomControl: true }).setView([45.4642, 9.19], 12);
+L.control.scale({ imperial: false, position: "topright" }).addTo(map);
+
+/* ---------- State ---------- */
+let track = [];
+let trackLine = null, trackDots = [], curMarker = null;
+let pins = [], pinLine = null, pinMode = false;
+let refreshTimer = null, liveOn = false;
+let liveSession = null;
+
+/* ---------- Helpers ---------- */
+function setStatus(text, cls) {
+  $("statusText").textContent = text;
+  $("statusPill").className = cls || "";
+}
+// On static hosting (GitHub Pages) the /api/* companion server isn't there
+const isStatic = /github\.io$/.test(location.hostname);
+const NEEDS_SERVER = "Needs the local server — run python3 server.py (see README)";
+function haversine(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const s = Math.sin(dLat/2)**2 + Math.cos(a.lat*rad) * Math.cos(b.lat*rad) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function fmtDist(m) { return m >= 1000 ? (m/1000).toFixed(2) + " km" : Math.round(m) + " m"; }
+function fmtDur(ms) {
+  if (!ms || ms < 0) return "—";
+  const h = Math.floor(ms/3600000), m = Math.round(ms%3600000/60000);
+  return h ? `${h}h ${m}m` : `${m} min`;
+}
+
+/* ---------- Drawer ---------- */
+function openDrawer() { $("drawer").classList.add("open"); $("overlay").classList.add("open"); }
+function closeDrawer() { $("drawer").classList.remove("open"); $("overlay").classList.remove("open"); }
+$("btnMenu").addEventListener("click", openDrawer);
+$("btnClose").addEventListener("click", closeDrawer);
+$("overlay").addEventListener("click", closeDrawer);
+
+/* ---------- Track rendering ---------- */
+function clearTrack() {
+  if (trackLine) map.removeLayer(trackLine);
+  trackDots.forEach(d => map.removeLayer(d));
+  if (curMarker) map.removeLayer(curMarker);
+  trackLine = null; trackDots = []; curMarker = null;
+}
+
+function renderTrack(points, { fit = true } = {}) {
+  clearTrack();
+  track = points;
+  if (!points.length) { updateStats(); return; }
+
+  const latlngs = points.map(p => [p.lat, p.lon]);
+  trackLine = L.polyline(latlngs, { color: "#34c98c", weight: 4, opacity: .92 }).addTo(map);
+
+  const step = Math.max(1, Math.floor(points.length / 300));
+  points.forEach((p, i) => {
+    if (i % step !== 0 && i !== points.length - 1) return;
+    const d = L.circleMarker([p.lat, p.lon], { radius: 3.5, color: "#1d7a54", fillColor: "#34c98c", fillOpacity: 1, weight: 1 })
+      .bindPopup(pointPopup(p, i));
+    d.addTo(map); trackDots.push(d);
+  });
+
+  const last = points[points.length - 1];
+  curMarker = L.marker([last.lat, last.lon], {
+    icon: L.divIcon({ className: "", html: '<div class="me-icon"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+    zIndexOffset: 1000
+  }).bindPopup(pointPopup(last, points.length - 1, true)).addTo(map);
+
+  if (fit) map.fitBounds(trackLine.getBounds(), { padding: [50, 50] });
+  updateStats();
+  showLastFix(last);
+}
+
+function pointPopup(p, i, latest) {
+  const rows = [];
+  if (latest) rows.push("<b>📍 Latest position</b>");
+  else rows.push(`<b>Fix #${i + 1}</b>`);
+  if (p.time) rows.push(p.time.toLocaleString());
+  if (p.ele != null && !isNaN(p.ele)) rows.push(`Elevation: ${Math.round(p.ele)} m`);
+  if (p.data) {
+    if (p.data["Velocity"]) rows.push(`Speed: ${p.data["Velocity"]}`);
+    if (p.data["Course"]) rows.push(`Course: ${p.data["Course"]}`);
+    if (p.data["Event"]) rows.push(`Event: ${p.data["Event"]}`);
+    if (p.data["Text"]) rows.push(`💬 ${p.data["Text"]}`);
+    if (p.data["In Emergency"] && p.data["In Emergency"].toLowerCase() === "true") rows.push("🆘 <b style='color:red'>IN EMERGENCY</b>");
+  }
+  rows.push(`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`);
+  return rows.join("<br>");
+}
+
+function showLastFix(p) {
+  if (!p) { $("lastFix").innerHTML = ""; return; }
+  const ago = p.time ? fmtDur(Date.now() - p.time.getTime()) + " ago" : "";
+  $("lastFix").innerHTML =
+    `<b>Last fix:</b> ${p.time ? p.time.toLocaleTimeString() : "?"} <span>(${ago})</span>` +
+    (p.data && p.data["Event"] ? `<br><b>Event:</b> ${p.data["Event"]}` : "");
+}
+
+function updateStats() {
+  let dist = 0;
+  for (let i = 1; i < track.length; i++) dist += haversine(track[i-1], track[i]);
+  const t0 = track.length && track[0].time, t1 = track.length && track[track.length-1].time;
+  const dur = (t0 && t1) ? t1 - t0 : 0;
+  $("stDist").textContent = track.length > 1 ? fmtDist(dist) : "—";
+  $("stTime").textContent = dur ? fmtDur(dur) : "—";
+  $("stSpeed").textContent = (dist && dur) ? (dist / (dur/1000) * 3.6).toFixed(1) + " km/h" : "—";
+  $("stPoints").textContent = track.length || "—";
+}
+
+/* ---------- Live tracking (FAB) ---------- */
+function startLive() {
+  const name = $("msName").value.trim();
+  if (!name) {
+    openDrawer();
+    $("msName").focus();
+    setStatus("Enter your Garmin Share name", "error");
+    return;
+  }
+  liveOn = true;
+  $("fabLive").classList.add("active");
+  fetchLive(false);
+  refreshTimer = setInterval(() => fetchLive(true), 60000);
+}
+function stopLive() {
+  liveOn = false;
+  $("fabLive").classList.remove("active");
+  clearInterval(refreshTimer);
+  refreshTimer = null;
+  setStatus("Live tracking off");
+}
+$("fabLive").addEventListener("click", () => liveOn ? stopLive() : startLive());
+
+/* ---------- LiveTrack (live.garmin.com — primary live feed) ---------- */
+async function fetchLive(auto) {
+  const name = $("msName").value.trim();
+  if (!name) { setStatus("Enter your Garmin Share name", "error"); return; }
+  localStorage.setItem("msName", name);
+  if (!auto) setStatus("Fetching from Garmin…");
+
+  if (isStatic) { setStatus(NEEDS_SERVER, "error"); stopLive(); return; }
+  let data;
+  try {
+    const r = await fetch("/api/livetrack/sessions?name=" + encodeURIComponent(name));
+    if (r.status === 404 && (r.headers.get("content-type") || "").includes("json")) {
+      return fetchMapShare(auto); // profile not found — try older MapShare-only accounts
+    }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
+    data = await r.json();
+  } catch (e) {
+    setStatus(e.message, "error");
+    return;
+  }
+
+  const active = data.activeSessions || [];
+  const completed = data.completedSessions || [];
+  renderSessionList(active, completed);
+
+  if (active.length) {
+    liveSession = active[0];
+    await loadLiveSession(liveSession, auto, true);
+  } else if (liveSession && auto) {
+    await loadLiveSession(liveSession, auto, false);
+    liveSession = null;
+  } else if (!auto) {
+    if (completed.length) {
+      setStatus(`No active walk — ${completed.length} past session${completed.length > 1 ? "s" : ""} in menu`, "live");
+    } else {
+      setStatus("Profile found, but no sessions yet", "live");
+    }
+  }
+}
+
+function renderSessionList(active, completed) {
+  const ul = $("sessionList");
+  ul.innerHTML = "";
+  const fmtKm = m => m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
+  for (const s of [...active, ...completed].slice(0, 12)) {
+    const isLive = active.includes(s);
+    const li = document.createElement("li");
+    li.innerHTML = (isLive ? '<span class="livebadge">LIVE</span>' : "") +
+      `<span class="fname"></span><span class="fmeta">${new Date(s.startDate).toLocaleDateString()}${s.distance ? " · " + fmtKm(s.distance) : ""}</span>`;
+    li.querySelector(".fname").textContent = s.sessionName || "Session";
+    const btn = document.createElement("button");
+    btn.textContent = isLive ? "Follow" : "Load";
+    btn.addEventListener("click", () => {
+      if (isLive) liveSession = s;
+      loadLiveSession(s, false, isLive);
+      closeDrawer();
+    });
+    li.appendChild(btn);
+    ul.appendChild(li);
+  }
+}
+
+async function loadLiveSession(s, auto, isLive) {
+  try {
+    const r = await fetch(`/api/livetrack/track?id=${encodeURIComponent(s.sessionId)}&token=${encodeURIComponent(s.sessionToken)}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
+    const { points } = await r.json();
+    if (!points.length) { setStatus("Session has no track points yet", isLive ? "live" : ""); return; }
+    const mapped = points.map(p => ({
+      lat: p.lat, lon: p.lon, ele: p.ele,
+      time: p.time ? new Date(p.time) : null,
+      data: {
+        ...(p.speed != null ? { "Velocity": (p.speed * 3.6).toFixed(1) + " km/h" } : {}),
+        ...(p.course != null ? { "Course": p.course + "°" } : {}),
+        "Event": isLive ? "Live tracking" : "Recorded session",
+      },
+    }));
+    renderTrack(mapped, { fit: !auto });
+    if (auto && $("followLast").checked) {
+      const last = mapped[mapped.length - 1];
+      map.panTo([last.lat, last.lon]);
+    }
+    setStatus(`${isLive ? "🔴 LIVE — " : ""}${s.sessionName || "Session"} · ${mapped.length} pts`, "live");
+  } catch (e) {
+    setStatus(e.message, "error");
+  }
+}
+
+/* ---------- MapShare KML (fallback for older accounts) ---------- */
+async function fetchMapShare(auto) {
+  const name = $("msName").value.trim();
+  if (!name) { setStatus("Enter your MapShare name", "error"); return; }
+  localStorage.setItem("msName", name);
+  setStatus(auto ? "Refreshing…" : "Fetching from Garmin…");
+
+  const hours = Number($("msHours").value);
+  const d1 = new Date(Date.now() - hours * 3600000).toISOString();
+  const qs = new URLSearchParams({ name, password: $("msPass").value, d1 });
+
+  try {
+    const r = await fetch("/api/mapshare?" + qs);
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || "HTTP " + r.status);
+    }
+    const kml = await r.text();
+    const points = parseKML(kml);
+    if (!points.length) {
+      setStatus("No track points — check name, or widen the look-back", "live");
+      clearTrack(); track = []; updateStats(); showLastFix(null);
+      return;
+    }
+    renderTrack(points, { fit: !auto });
+    if (auto && $("followLast").checked) {
+      const last = points[points.length - 1];
+      map.panTo([last.lat, last.lon]);
+    }
+    setStatus(`Live · ${points.length} satellite fixes`, "live");
+  } catch (e) {
+    setStatus(e.message, "error");
+  }
+}
+
+function parseKML(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  const out = [];
+  for (const pm of doc.getElementsByTagName("Placemark")) {
+    const pt = pm.getElementsByTagName("Point")[0];
+    if (!pt) continue;
+    const coords = pt.getElementsByTagName("coordinates")[0];
+    if (!coords) continue;
+    const [lon, lat, ele] = coords.textContent.trim().split(",").map(Number);
+    if (isNaN(lat) || isNaN(lon)) continue;
+    const when = pm.getElementsByTagName("when")[0];
+    const data = {};
+    for (const d of pm.getElementsByTagName("Data")) {
+      const v = d.getElementsByTagName("value")[0];
+      data[d.getAttribute("name")] = v ? v.textContent : "";
+    }
+    out.push({ lat, lon, ele, time: when ? new Date(when.textContent) : null, data });
+  }
+  out.sort((a, b) => (a.time || 0) - (b.time || 0));
+  return out;
+}
+
+$("msName").value = localStorage.getItem("msName") || "";
+
+/* ---------- Device connection (USB bridge via local server) ---------- */
+let devWatchTimer = null;
+let devWasConnected = false;
+
+async function connectDevice(silent) {
+  const btn = $("btnConnect");
+  if (isStatic) { if (!silent) setStatus(NEEDS_SERVER, "error"); return; }
+  if (!silent) {
+    btn.disabled = true;
+    btn.textContent = "Scanning…";
+    setStatus("Scanning USB for inReach…");
+  }
+  try {
+    const r = await fetch("/api/device/status");
+    if (!r.ok) throw new Error("Server error " + r.status);
+    const s = await r.json();
+    renderDeviceStatus(s);
+    if (s.connected && !devWasConnected) setStatus("Device connected", "live");
+    else if (!s.connected && devWasConnected) setStatus("Device disconnected", "error");
+    else if (!silent) setStatus(s.connected ? "Device connected" : "No device found", s.connected ? "live" : "");
+    devWasConnected = s.connected;
+    if (!devWatchTimer) devWatchTimer = setInterval(() => connectDevice(true), 8000);
+  } catch (e) {
+    if (!silent) setStatus(e.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = devWasConnected ? "Rescan device" : "Connect device";
+  }
+}
+
+function renderDeviceStatus(s) {
+  const box = $("devStatus");
+  const files = $("devFiles");
+  files.innerHTML = "";
+
+  const send = $("btnSend");
+  send.disabled = !s.canReceive;
+  send.title = s.canReceive ? "Writes a GPX route into Garmin/NewFiles on the device" : "Connect the device first";
+
+  if (!s.connected) {
+    box.innerHTML = `<span class="no">● Not connected</span><br>
+      Plug the inReach Mini 2 in with a <b>data-capable</b> USB-C cable, then it will appear here automatically.`;
+    return;
+  }
+
+  let html = `<span class="ok">● Connected</span><br>`;
+  if (s.device && s.device.model) {
+    html += `<b>${s.device.model}</b>` +
+      (s.device.firmware ? ` · fw ${(Number(s.device.firmware) / 100).toFixed(2)}` : "") +
+      (s.device.unitId ? ` <span style="font-size:10px">(unit ${s.device.unitId})</span>` : "") + "<br>";
+  } else if (s.usb) {
+    html += `<b>${s.usb.name || "Garmin USB device"}</b>` +
+      (s.usb.serial ? ` <span style="font-size:10px">(SN ${s.usb.serial})</span>` : "") + "<br>";
+  }
+  if (s.volumes.length) {
+    html += `Volume: <b>${s.volumes.map(v => v.split("/").pop()).join(", ")}</b><br>`;
+  }
+  if (s.gpxFiles.length) {
+    html += `${s.gpxFiles.length} track file${s.gpxFiles.length > 1 ? "s" : ""} on device — tap to load:`;
+  } else if (s.volumes.length) {
+    html += `No GPX files found on the device volume.`;
+  } else {
+    html += `USB detected, but the device doesn't mount as a drive on this Mac.<br>
+      Use live tracking, or export GPX from
+      <a href="https://explore.garmin.com" target="_blank" style="color:var(--accent-2)">Garmin Explore</a> and import it.`;
+  }
+  box.innerHTML = html;
+
+  for (const f of s.gpxFiles) {
+    const li = document.createElement("li");
+    const date = new Date(f.modified * 1000);
+    li.innerHTML = `<span class="fname"></span><span class="fmeta">${date.toLocaleDateString()} · ${(f.size/1024).toFixed(0)} KB</span>`;
+    li.querySelector(".fname").textContent = f.name;
+    const load = document.createElement("button");
+    load.textContent = "Load";
+    load.addEventListener("click", async () => {
+      load.disabled = true; load.textContent = "…";
+      try {
+        const r = await fetch("/api/device/gpx?path=" + encodeURIComponent(f.path));
+        if (!r.ok) throw new Error("Cannot read " + f.name);
+        importGPX(await r.text(), f.name);
+        closeDrawer();
+      } catch (e) {
+        setStatus(e.message, "error");
+      } finally {
+        load.disabled = false; load.textContent = "Load";
+      }
+    });
+    li.appendChild(load);
+    files.appendChild(li);
+  }
+}
+
+$("btnConnect").addEventListener("click", () => connectDevice(false));
+renderDeviceStatus({ connected: false, volumes: [], gpxFiles: [] });
+
+/* ---------- Pins & trek builder ---------- */
+function pinIcon(n) {
+  return L.divIcon({ className: "", html: `<div class="pin-icon"><span>${n}</span></div>`, iconSize: [26, 26], iconAnchor: [4, 24], popupAnchor: [9, -22] });
+}
+
+function addPin(latlng, name) {
+  const n = pins.length + 1;
+  const marker = L.marker(latlng, { icon: pinIcon(n), draggable: true }).addTo(map);
+  const pin = { marker, name: name || `Pin ${n}` };
+  marker.bindPopup(() => {
+    const i = pins.indexOf(pin);
+    return `<b>${pin.name}</b><br>${marker.getLatLng().lat.toFixed(5)}, ${marker.getLatLng().lng.toFixed(5)}` +
+      (i > 0 ? `<br>Leg: ${fmtDist(legDist(i))}` : "");
+  });
+  marker.on("drag", redrawPinLine);
+  marker.on("dragend", renderPinList);
+  pins.push(pin);
+  redrawPinLine();
+  renderPinList();
+}
+
+function legDist(i) {
+  const a = pins[i-1].marker.getLatLng(), b = pins[i].marker.getLatLng();
+  return haversine({ lat: a.lat, lon: a.lng }, { lat: b.lat, lon: b.lng });
+}
+
+function redrawPinLine() {
+  if (pinLine) map.removeLayer(pinLine);
+  pinLine = null;
+  if (pins.length > 1) {
+    pinLine = L.polyline(pins.map(p => p.marker.getLatLng()), { color: "#ff8a4a", weight: 3, dashArray: "7 6", opacity: .95 }).addTo(map);
+  }
+}
+
+function renderPinList() {
+  const ul = $("pinList");
+  ul.innerHTML = "";
+  let total = 0;
+  pins.forEach((p, i) => {
+    if (i > 0) total += legDist(i);
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="n">${i+1}</span><span class="name"></span><span class="d">${i > 0 ? "+" + fmtDist(legDist(i)) : "start"}</span>`;
+    li.querySelector(".name").textContent = p.name;
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.addEventListener("click", () => removePin(i));
+    li.appendChild(del);
+    ul.appendChild(li);
+  });
+  if (pins.length > 1) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="n" style="background:var(--accent);color:#06281a">Σ</span><span class="name"><b>Trek total</b></span><span class="d"><b>${fmtDist(total)}</b></span>`;
+    ul.appendChild(li);
+  }
+}
+
+function removePin(i) {
+  map.removeLayer(pins[i].marker);
+  pins.splice(i, 1);
+  pins.forEach((p, j) => p.marker.setIcon(pinIcon(j + 1)));
+  redrawPinLine();
+  renderPinList();
+}
+
+$("btnPinMode").addEventListener("click", () => {
+  pinMode = !pinMode;
+  $("btnPinMode").textContent = "Drop pins: " + (pinMode ? "ON" : "OFF");
+  $("btnPinMode").classList.toggle("toggled", pinMode);
+  $("mapHint").style.display = pinMode ? "block" : "none";
+  map.getContainer().style.cursor = pinMode ? "crosshair" : "";
+  if (pinMode) closeDrawer();
+});
+map.on("click", e => { if (pinMode) addPin(e.latlng); });
+$("btnUndoPin").addEventListener("click", () => { if (pins.length) removePin(pins.length - 1); });
+$("btnClearPins").addEventListener("click", () => { while (pins.length) removePin(pins.length - 1); });
+
+/* ---------- GPX import ---------- */
+function importGPX(text, fileName) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) { setStatus("Not a valid GPX file", "error"); return; }
+
+  const pts = [];
+  for (const tp of doc.getElementsByTagName("trkpt")) {
+    const lat = Number(tp.getAttribute("lat")), lon = Number(tp.getAttribute("lon"));
+    if (isNaN(lat) || isNaN(lon)) continue;
+    const ele = tp.getElementsByTagName("ele")[0];
+    const time = tp.getElementsByTagName("time")[0];
+    pts.push({ lat, lon, ele: ele ? Number(ele.textContent) : null, time: time ? new Date(time.textContent) : null, data: null });
+  }
+  if (!pts.length) {
+    for (const rp of doc.getElementsByTagName("rtept")) {
+      pts.push({ lat: Number(rp.getAttribute("lat")), lon: Number(rp.getAttribute("lon")), ele: null, time: null, data: null });
+    }
+  }
+  for (const wp of doc.getElementsByTagName("wpt")) {
+    const nameEl = wp.getElementsByTagName("name")[0];
+    addPin(L.latLng(Number(wp.getAttribute("lat")), Number(wp.getAttribute("lon"))), nameEl ? nameEl.textContent : null);
+  }
+
+  if (pts.length) {
+    renderTrack(pts);
+    setStatus(`Imported ${fileName}: ${pts.length} points`, "live");
+  } else if (doc.getElementsByTagName("wpt").length) {
+    setStatus(`Imported ${fileName}: waypoints only`, "live");
+    if (pins.length) map.fitBounds(L.featureGroup(pins.map(p => p.marker)).getBounds().pad(0.3));
+  } else {
+    setStatus("GPX contained no points", "error");
+  }
+}
+
+$("btnImport").addEventListener("click", () => $("gpxFile").click());
+$("gpxFile").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (f) f.text().then(t => { importGPX(t, f.name); closeDrawer(); });
+  e.target.value = "";
+});
+const dz = $("dropZone");
+["dragover", "dragenter"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("drag"); }));
+dz.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => { importGPX(t, f.name); closeDrawer(); });
+});
+
+/* ---------- GPX export & send ---------- */
+function buildGPX() {
+  if (!pins.length && !track.length) return null;
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="inReach Trek Tracker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+  pins.forEach(p => {
+    const ll = p.marker.getLatLng();
+    gpx += `  <wpt lat="${ll.lat.toFixed(6)}" lon="${ll.lng.toFixed(6)}"><name>${esc(p.name)}</name></wpt>\n`;
+  });
+  if (pins.length > 1) {
+    gpx += `  <rte><name>Pinned trek</name>\n`;
+    pins.forEach(p => {
+      const ll = p.marker.getLatLng();
+      gpx += `    <rtept lat="${ll.lat.toFixed(6)}" lon="${ll.lng.toFixed(6)}"><name>${esc(p.name)}</name></rtept>\n`;
+    });
+    gpx += `  </rte>\n`;
+  }
+  if (track.length) {
+    gpx += `  <trk><name>inReach track</name><trkseg>\n`;
+    track.forEach(p => {
+      gpx += `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}">` +
+        (p.ele != null && !isNaN(p.ele) ? `<ele>${Math.round(p.ele)}</ele>` : "") +
+        (p.time ? `<time>${p.time.toISOString()}</time>` : "") + `</trkpt>\n`;
+    });
+    gpx += `  </trkseg></trk>\n`;
+  }
+  gpx += `</gpx>\n`;
+  return gpx;
+}
+
+$("btnExport").addEventListener("click", () => {
+  const gpx = buildGPX();
+  if (!gpx) { setStatus("Nothing to export yet", "error"); return; }
+  const blob = new Blob([gpx], { type: "application/gpx+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "trek-" + new Date().toISOString().slice(0, 10) + ".gpx";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("btnSend").addEventListener("click", async () => {
+  const gpx = buildGPX();
+  if (!gpx) { setStatus("Nothing to send — drop pins or load a track first", "error"); return; }
+  const btn = $("btnSend");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/device/send", { method: "POST", headers: { "Content-Type": "application/gpx+xml" }, body: gpx });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.error || "Send failed");
+    setStatus("Sent to device — imports on next restart/sync", "live");
+  } catch (e) {
+    setStatus(e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ---------- My position (FAB) ---------- */
+$("fabLocate").addEventListener("click", () => {
+  setStatus("Locating…");
+  map.locate({ setView: true, maxZoom: 15 });
+});
+map.on("locationfound", e => {
+  L.circleMarker(e.latlng, { radius: 7, color: "#4aa8ff", fillOpacity: .8 })
+    .bindPopup("You are here (±" + Math.round(e.accuracy) + " m)").addTo(map).openPopup();
+  setStatus("Position found", "live");
+});
+map.on("locationerror", () => setStatus("Location unavailable", "error"));
+
+/* ---------- Map tools ---------- */
+let topoOn = false;
+$("btnLayer").addEventListener("click", () => {
+  topoOn = !topoOn;
+  $("btnLayer").textContent = "Topo map: " + (topoOn ? "ON" : "OFF");
+  $("btnLayer").classList.toggle("toggled", topoOn);
+  if (topoOn) { map.removeLayer(osm); map.addLayer(topo); }
+  else { map.removeLayer(topo); map.addLayer(osm); }
+});
+$("btnFit").addEventListener("click", () => {
+  const layers = [];
+  if (trackLine) layers.push(trackLine);
+  if (pinLine) layers.push(pinLine);
+  pins.forEach(p => layers.push(p.marker));
+  if (layers.length) { map.fitBounds(L.featureGroup(layers).getBounds().pad(0.15)); closeDrawer(); }
+});
+</script>
+</body>
+</html>
